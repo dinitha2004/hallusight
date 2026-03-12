@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HalluSight — LLM Hallucination Detector</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  /* ── Reset & Variables ─────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --surface2:  #1a1a24;
+    --border:    #2a2a3a;
+    --text:      #e8e8f0;
+    --muted:     #6b6b8a;
+    --accent:    #7c6af7;
+    --accent2:   #a78bfa;
+    --low:       #22c55e;
+    --medium:    #f59e0b;
+    --high:      #ef4444;
+    --high-bg:   rgba(239,68,68,0.18);
+    --med-bg:    rgba(245,158,11,0.15);
+    --radius:    12px;
+    --mono:      'DM Mono', monospace;
+    --sans:      'Syne', sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* ── Background grid ───────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.3;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Header ────────────────────────────────────────── */
+  header {
+    position: relative;
+    z-index: 10;
+    padding: 32px 48px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: rgba(10,10,15,0.85);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo-mark {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 800;
+    color: white; flex-shrink: 0;
+    box-shadow: 0 0 20px rgba(124,106,247,0.4);
+  }
+
+  .logo-text h1 {
+    font-size: 22px; font-weight: 800;
+    background: linear-gradient(135deg, #fff 0%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-text p {
+    font-size: 12px; color: var(--muted);
+    font-family: var(--mono); margin-top: 2px;
+  }
+
+  .status-pill {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 6px 14px;
+    font-size: 12px; font-family: var(--mono);
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .status-dot.ready  { background: var(--low); box-shadow: 0 0 8px var(--low); }
+  .status-dot.loading { background: var(--medium); animation: pulse 1s infinite; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Main layout ───────────────────────────────────── */
+  main {
+    position: relative; z-index: 10;
+    max-width: 900px; width: 100%;
+    margin: 0 auto;
+    padding: 48px 24px;
+    flex: 1;
+  }
+
+  /* ── Input card ────────────────────────────────────── */
+  .input-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 24px;
+  }
+
+  .input-card label {
+    display: block;
+    font-size: 11px; font-family: var(--mono);
+    color: var(--muted); letter-spacing: 1.5px;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+
+  textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 14px 16px;
+    resize: vertical;
+    min-height: 90px;
+    transition: border-color 0.2s;
+    outline: none;
+  }
+
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--muted); }
+
+  .controls {
+    display: flex; align-items: center;
+    gap: 12px; margin-top: 14px;
+  }
+
+  .token-label {
+    font-size: 12px; font-family: var(--mono);
+    color: var(--muted); white-space: nowrap;
+  }
+
+  input[type=range] {
+    flex: 1; accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .token-val {
+    font-size: 12px; font-family: var(--mono);
+    color: var(--accent2); min-width: 28px;
+  }
+
+  .run-btn {
+    margin-top: 16px; width: 100%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: white; border: none;
+    border-radius: 8px;
+    padding: 14px;
+    font-family: var(--sans); font-size: 15px; font-weight: 700;
+    cursor: pointer; letter-spacing: 0.3px;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+
+  .run-btn:hover:not(:disabled)  { opacity: 0.88; }
+  .run-btn:active:not(:disabled) { transform: scale(0.99); }
+  .run-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* ── Loading bar ───────────────────────────────────── */
+  .loading-bar {
+    display: none;
+    height: 3px;
+    background: var(--surface2);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 16px;
+  }
+  .loading-bar.active { display: block; }
+  .loading-bar::after {
+    content: '';
+    display: block; height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  /* ── Result card ───────────────────────────────────── */
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    display: none;
+    animation: fadeUp 0.4s ease;
+  }
+  .result-card.visible { display: block; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Score banner ──────────────────────────────────── */
+  .score-banner {
+    display: flex; align-items: center;
+    gap: 20px; margin-bottom: 24px;
+    background: var(--surface2);
+    border-radius: 10px; padding: 20px 24px;
+    border: 1px solid var(--border);
+  }
+
+  .score-circle {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-weight: 800; font-size: 20px;
+    border: 3px solid;
+    transition: all 0.4s;
+  }
+  .score-circle.low    { color: var(--low);    border-color: var(--low);    background: rgba(34,197,94,0.08); }
+  .score-circle.medium { color: var(--medium); border-color: var(--medium); background: rgba(245,158,11,0.08); }
+  .score-circle.high   { color: var(--high);   border-color: var(--high);   background: var(--high-bg); }
+
+  .score-circle span { font-size: 10px; font-family: var(--mono); opacity: 0.8; }
+
+  .score-info h3 {
+    font-size: 18px; font-weight: 700; margin-bottom: 4px;
+  }
+  .score-info p {
+    font-size: 13px; color: var(--muted); font-family: var(--mono);
+  }
+
+  .score-meta {
+    margin-left: auto; text-align: right;
+    font-family: var(--mono); font-size: 12px;
+    color: var(--muted); line-height: 1.8;
+  }
+
+  /* ── Stats row ─────────────────────────────────────── */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 12px; margin-bottom: 24px;
+  }
+
+  .stat-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+
+  .stat-box .val {
+    font-size: 24px; font-weight: 800;
+    font-family: var(--mono);
+  }
+  .stat-box .val.high-col   { color: var(--high); }
+  .stat-box .val.med-col    { color: var(--medium); }
+  .stat-box .val.low-col    { color: var(--low); }
+
+  .stat-box .lbl {
+    font-size: 11px; color: var(--muted);
+    font-family: var(--mono); margin-top: 4px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Section heading ───────────────────────────────── */
+  .section-label {
+    font-size: 11px; font-family: var(--mono);
+    color: var(--muted); letter-spacing: 1.5px;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+
+  /* ── Highlighted answer ────────────────────────────── */
+  .answer-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    font-family: var(--mono); font-size: 14px;
+    line-height: 1.9; margin-bottom: 24px;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  /* Hallucinated span highlight */
+  .hl-high {
+    background: var(--high-bg);
+    color: #fca5a5;
+    border-bottom: 2px solid var(--high);
+    border-radius: 3px;
+    padding: 1px 2px;
+    position: relative;
+  }
+
+  .hl-medium {
+    background: var(--med-bg);
+    color: #fde68a;
+    border-bottom: 2px solid var(--medium);
+    border-radius: 3px;
+    padding: 1px 2px;
+  }
+
+  /* ── Span list ─────────────────────────────────────── */
+  .span-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .span-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--high);
+    border-radius: 6px;
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+
+  .span-text {
+    font-family: var(--mono); font-size: 13px;
+    color: #fca5a5; flex: 1;
+  }
+
+  .span-score {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--high);
+    background: var(--high-bg);
+    padding: 2px 8px; border-radius: 4px;
+  }
+
+  .no-spans {
+    font-family: var(--mono); font-size: 13px;
+    color: var(--low); padding: 16px;
+    background: rgba(34,197,94,0.06);
+    border: 1px solid rgba(34,197,94,0.2);
+    border-radius: 8px; text-align: center;
+  }
+
+  /* ── Legend ────────────────────────────────────────── */
+  .legend {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin-top: 16px;
+  }
+
+  .legend-item {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-family: var(--mono); color: var(--muted);
+  }
+
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 2px;
+  }
+
+  /* ── Error box ─────────────────────────────────────── */
+  .error-box {
+    display: none;
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 8px;
+    padding: 16px 20px;
+    color: #fca5a5;
+    font-family: var(--mono); font-size: 13px;
+    margin-top: 16px;
+  }
+  .error-box.visible { display: block; }
+
+  /* ── Footer ────────────────────────────────────────── */
+  footer {
+    position: relative; z-index: 10;
+    text-align: center; padding: 24px;
+    font-family: var(--mono); font-size: 12px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Responsive ────────────────────────────────────── */
+  @media (max-width: 600px) {
+    header { padding: 20px; }
+    main   { padding: 24px 16px; }
+    .stats-row { grid-template-columns: 1fr 1fr; }
+    .score-meta { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────── -->
+<header>
+  <div class="logo-mark">H</div>
+  <div class="logo-text">
+    <h1>HalluSight</h1>
+    <p>Real-time LLM Hallucination Detection</p>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot loading" id="statusDot"></div>
+    <span id="statusText">Connecting...</span>
+  </div>
+</header>
+
+<!-- ── Main ────────────────────────────────────────────── -->
+<main>
+
+  <!-- Input card -->
+  <div class="input-card">
+    <label>Enter a prompt or question</label>
+    <textarea id="promptInput" rows="3"
+      placeholder="e.g. Who was the first person to walk on the moon?"></textarea>
+
+    <div class="controls">
+      <span class="token-label">Max tokens:</span>
+      <input type="range" id="tokenSlider" min="20" max="200" value="80"
+             oninput="document.getElementById('tokenVal').textContent=this.value" />
+      <span class="token-val" id="tokenVal">80</span>
+    </div>
+
+    <button class="run-btn" id="runBtn" onclick="runDetection()">
+      ▶ Detect Hallucinations
+    </button>
+
+    <div class="loading-bar" id="loadingBar"></div>
+    <div class="error-box" id="errorBox"></div>
+  </div>
+
+  <!-- Result card -->
+  <div class="result-card" id="resultCard">
+
+    <!-- Score banner -->
+    <div class="score-banner">
+      <div class="score-circle" id="scoreCircle">
+        <span id="scoreNum">0</span>
+        <span>%</span>
+      </div>
+      <div class="score-info">
+        <h3 id="riskLabel">LOW RISK</h3>
+        <p id="warningMsg">Analysis complete</p>
+      </div>
+      <div class="score-meta" id="scoreMeta"></div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="val high-col" id="statHigh">0</div>
+        <div class="lbl">HIGH RISK TOKENS</div>
+      </div>
+      <div class="stat-box">
+        <div class="val med-col" id="statMed">0</div>
+        <div class="lbl">MEDIUM RISK TOKENS</div>
+      </div>
+      <div class="stat-box">
+        <div class="val low-col" id="statLow">0</div>
+        <div class="lbl">LOW RISK TOKENS</div>
+      </div>
+    </div>
+
+    <!-- Highlighted answer -->
+    <div class="section-label">Generated Answer (highlighted)</div>
+    <div class="answer-box" id="answerBox"></div>
+
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--high-bg);border:1px solid var(--high)"></div>
+        High risk — likely hallucinated
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--med-bg);border:1px solid var(--medium)"></div>
+        Medium risk — verify this
+      </div>
+    </div>
+
+    <!-- Flagged spans -->
+    <div class="section-label" style="margin-top:24px">Flagged Spans</div>
+    <div class="span-list" id="spanList"></div>
+
+  </div><!-- /result-card -->
+</main>
+
+<footer>HalluSight v1.0 — Research Prototype &nbsp;·&nbsp; Built with OPT-1.3B + SEP Probe</footer>
+
+<!-- ── JavaScript ───────────────────────────────────────── -->
+<script>
+const API = "http://localhost:5001";
+
+/* ── Check server health on load ────────────────────── */
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    const d = await r.json();
+    const dot  = document.getElementById("statusDot");
+    const txt  = document.getElementById("statusText");
+    if (d.pipeline_ready) {
+      dot.className = "status-dot ready";
+      txt.textContent = "Pipeline ready";
+    } else {
+      dot.className = "status-dot loading";
+      txt.textContent = "Loading model...";
+      setTimeout(checkHealth, 3000);
+    }
+  } catch {
+    document.getElementById("statusDot").className = "status-dot";
+    document.getElementById("statusText").textContent = "Server offline";
+    setTimeout(checkHealth, 5000);
+  }
+}
+checkHealth();
+
+/* ── Run detection ──────────────────────────────────── */
+async function runDetection() {
+  const prompt = document.getElementById("promptInput").value.trim();
+  if (!prompt) { showError("Please enter a prompt."); return; }
+
+  const maxTokens = parseInt(document.getElementById("tokenSlider").value);
+
+  setLoading(true);
+  hideError();
+  hideResult();
+
+  try {
+    const res = await fetch(`${API}/detect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, max_tokens: maxTokens }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || `Server error ${res.status}`);
+    }
+
+    const data = await res.json();
+    renderResult(data);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ── Render results ─────────────────────────────────── */
+function renderResult(d) {
+  const level = (d.risk_level || "LOW").toUpperCase();
+
+  // Score circle
+  const circle = document.getElementById("scoreCircle");
+  circle.className = "score-circle " + level.toLowerCase();
+  document.getElementById("scoreNum").textContent = Math.round(d.overall_score || 0);
+
+  // Labels
+  document.getElementById("riskLabel").textContent = level + " HALLUCINATION RISK";
+  document.getElementById("warningMsg").textContent = d.warning_message || "";
+
+  // Meta
+  document.getElementById("scoreMeta").innerHTML =
+    `${d.total_tokens || 0} tokens generated<br>` +
+    `${(d.hallucinated_spans || []).length} spans flagged<br>` +
+    `${d.processing_time || 0}s processing`;
+
+  // Stats
+  document.getElementById("statHigh").textContent = d.high_risk_tokens  || 0;
+  document.getElementById("statMed" ).textContent = d.medium_risk_tokens || 0;
+  document.getElementById("statLow" ).textContent = d.low_risk_tokens    || 0;
+
+  // Highlighted answer
+  document.getElementById("answerBox").innerHTML = buildHighlight(
+    d.tokens || [], d.risk_scores || []
+  );
+
+  // Span list
+  const spanList = document.getElementById("spanList");
+  const spans = d.hallucinated_spans || [];
+  if (spans.length === 0) {
+    spanList.innerHTML = '<div class="no-spans">✓ No high-risk spans detected</div>';
+  } else {
+    spanList.innerHTML = spans.map(s =>
+      `<div class="span-item">
+        <span class="span-text">"${escHtml(s.text || s.tokens?.join(' ') || '')}"</span>
+        <span class="span-score">${Math.round((s.avg_risk||0)*100)}% risk</span>
+       </div>`
+    ).join("");
+  }
+
+  showResult();
+}
+
+/* ── Build inline highlighted HTML from tokens + scores */
+function buildHighlight(tokens, scores) {
+  if (!tokens.length) return "<em>No output</em>";
+  return tokens.map((tok, i) => {
+    const s = scores[i] || 0;
+    const word = escHtml(tok);
+    if (s >= 0.6) return `<span class="hl-high" title="Risk: ${Math.round(s*100)}%">${word}</span>`;
+    if (s >= 0.4) return `<span class="hl-medium" title="Risk: ${Math.round(s*100)}%">${word}</span>`;
+    return word;
+  }).join(" ");
+}
+
+function escHtml(t) {
+  return String(t)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;");
+}
+
+/* ── UI helpers ─────────────────────────────────────── */
+function setLoading(on) {
+  document.getElementById("runBtn").disabled = on;
+  document.getElementById("runBtn").textContent = on
+    ? "⏳ Analysing..." : "▶ Detect Hallucinations";
+  document.getElementById("loadingBar").className =
+    "loading-bar" + (on ? " active" : "");
+}
+
+function showResult()  { document.getElementById("resultCard").className = "result-card visible"; }
+function hideResult()  { document.getElementById("resultCard").className = "result-card"; }
+function showError(m)  {
+  const b = document.getElementById("errorBox");
+  b.textContent = "⚠ " + m;
+  b.className = "error-box visible";
+}
+function hideError()   { document.getElementById("errorBox").className = "error-box"; }
+
+/* ── Allow Ctrl+Enter to submit ─────────────────────── */
+document.getElementById("promptInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runDetection();
+});
+</script>
+</body>
+</html>
