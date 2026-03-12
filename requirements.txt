@@ -1,0 +1,11 @@
+torch
+transformers
+scikit-learn
+numpy
+scipy
+spacy
+flask
+flask-cors
+joblib
+huggingface_hub
+accelerate
